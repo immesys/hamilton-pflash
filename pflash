@@ -1,0 +1,149 @@
+#!/bin/bash
+
+if [ -z "$SCRIPTPW" ]
+then
+  echo "you need to set $SCRIPTPW"
+  exit 1
+fi
+
+if [ -z "$MOTETYPE" ]
+then
+  echo "you need to set MOTETYPE eg br1 is 8001 other hamiltons are 7 or 3c or 8c"
+  exit 1
+fi
+
+export MYSQL_PWD=${SCRIPTPW}
+SQL="mysql -s -uscript -hdb.steelcode.com hamilton"
+
+set -e
+#make clean
+make -j32
+set +e
+
+if [ $(find bin -name "*.bin" | wc -l) -ne 1 ]
+then
+  echo "could not locate BIN"
+  exit 1
+fi
+BINFILE=$(find bin -name "*.bin")
+binhash=$(md5sum ${BINFILE} | cut -d' ' -f 1)
+
+# first, check if this device is known (so we get its moteid)
+echo "speed 1000" > .jlink
+echo "erase" >> .jlink
+echo "mem32 0x0080a00c 1" >> .jlink
+echo "mem32 0x0080a040 1" >> .jlink
+echo "mem32 0x0080a044 1" >> .jlink
+echo "mem32 0x0080a048 1" >> .jlink
+echo "exit" >> .jlink
+JLinkExe -if swd -device atsamr21e18a < .jlink >.jlinko
+if [ $? -ne 0]
+then
+  echo "whoops"
+  exit 1
+fi
+echo "jlinko was:"
+cat .jlinko
+w1=$(cat .jlinko | grep -e "^0080A00C =" | cut -d' ' -f 3)
+w2=$(cat .jlinko | grep -e "^0080A040 =" | cut -d' ' -f 3)
+w3=$(cat .jlinko | grep -e "^0080A044 =" | cut -d' ' -f 3)
+w4=$(cat .jlinko | grep -e "^0080A048 =" | cut -d' ' -f 3)
+deviceid=$(printf "%08x%08x%08x%08x" 0x$w1 0x$w2 0x$w3 0x$w4)
+echo -e "\033[34;1m[!] device id is $deviceid \033[0m"
+existing=$(echo "SELECT COUNT(*) FROM motes WHERE devid = '${deviceid}'" | $SQL)
+if [ $existing -ne 1 ]
+then
+  echo -e "\033[34;1m[!] this mote has not been assigned an ID. Assigning one...\033[0m"
+  set -e
+  echo "INSERT INTO motes(devid) VALUES ('${deviceid}')" | $SQL
+  set +e
+fi
+moteid=$(echo "SELECT moteid FROM motes WHERE devid='${deviceid}'" | $SQL)
+if [ $? -ne 0 ]
+then
+  echo -e "\033[34;1m[!] could not obtain mote ID\033[0m"
+  exit 1
+fi
+hexform=$(printf "0x%04x" $moteid)
+echo -e "\033[34;1m[!] This mote's unique ID is $hexform\033[0m"
+
+# determine git hash
+githash=$(git log --pretty=format:'%H' -n 1)
+if [ $? -ne 0 ]
+then
+  echo "could not get git hash"
+  exit 1
+fi
+
+# determine repository
+gitrepo=$(git config --get remote.origin.url)
+if [ $? -ne 0 ]
+then
+  echo "could not get remote repo"
+  exit 1
+fi
+
+mkdir -p .pflash
+
+if [ ! -e .pflash/$hexform.ent ]
+then
+  bw2 mke -o .pflash/$hexform.ent -m "hamilton $hexform" -e 10y -r michael -r ucberkeley -n
+fi
+
+# determine public key
+new_vk64=$(inspectent vk64 .pflash/$hexform.ent)
+new_vk16=$(inspectent vk16 .pflash/$hexform.ent)
+new_sk16=$(inspectent sk16 .pflash/$hexform.ent)
+publickey=$new_vk64
+
+echo -e "\033[34;1m[!] using public key $publickey\033[0m"
+symkey=$(head -c 1024 /dev/urandom | sha256sum | head -c 32)
+#
+# found=$(echo "SELECT COUNT(*) FROM motes WHERE devid='${macaddr}' AND publickey='${publickey}'" | $SQL)
+# if [ $found -ne 0 ]
+# then
+#   echo -e "\033[34;1m[!] The MAC/Key is already registered (OK)\033[0m"
+# else
+#   echo "INSERT INTO motes (mac, publickey) VALUES ('${macaddr}', '${publickey}')" | $SQL
+#   if [ $? -ne 0 ]
+#   then
+#     echo -e "\033[34;1m[!] Badness, either the MAC or the Key is duplicated\033[0m"
+#     exit 2
+#   else
+#     echo -e "\033[34;1m[!] New physical hamilton MAC/Key registered\033[0m"
+#   fi
+# fi
+
+# now we do the instance itself
+echo "INSERT INTO instances (moteid, repository, commit, motetype, publickey, symkey) VALUES (${moteid}, '${gitrepo}', '${githash}', '${MOTETYPE}', '$publickey', '$symkey')" | $SQL
+if [ $? -ne 0 ]
+then
+  echo "unexpected error inserting instance ID"
+  exit 1
+fi
+
+#sentinel
+mkfactoryblock 2 $moteid $MOTETYPE $symkey $new_vk16 $new_sk16
+if [ $? -ne 0 ]
+then
+  echo "Could not make factory block"
+  exit 1
+fi
+
+#flashed time
+# now we flash the device
+echo "speed 1000" > .jlink
+echo "erase" >> .jlink
+echo "loadbin ${BINFILE} 0" >> .jlink
+echo "loadbin fblock.bin 0x3fc00" >> .jlink
+if [ -z "$NOSECURE" ]
+then
+  echo "w2 0x41004000 0xA545" >> .jlink
+  echo "w2 0x41004000 0xA50F" >> .jlink
+fi
+echo "exit" >> .jlink
+JLinkExe -if swd -device atsamr21e18a < .jlink
+
+echo -e "\033[34;1m[!] unique ID is  $hexform\033[0m"
+echo -e "\033[34;1m[!] device id is  $deviceid\033[0m"
+echo -e "\033[34;1m[!] public key is $publickey\033[0m"
