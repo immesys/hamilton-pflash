@@ -9,14 +9,16 @@ import (
 	"time"
 )
 
+const Version = "3"
+
 func main() {
 	//mkfactoryblock 1 uniqueid designator publickey16 privatekey16
 	if len(os.Args) != 7 {
-		fmt.Println("usage: mkfactoryblock 2 uniqueid:dec designator:hex symmkey:hex publickey:hex privatekey:hex")
+		fmt.Printf("usage: mkfactoryblock %s uniqueid:dec designator:hex symmkey:hex publickey:hex privatekey:hex\n", Version)
 		os.Exit(1)
 	}
-	if os.Args[1] != "2" {
-		fmt.Println("wrong mkfactoryblock version (we are 2)")
+	if os.Args[1] != Version {
+		fmt.Printf("wrong mkfactoryblock version (we are %s)\n", Version)
 		os.Exit(1)
 	}
 	out := make([]byte, 1024)
@@ -32,15 +34,16 @@ func main() {
 		fmt.Printf("error: %v\n", err)
 		os.Exit(1)
 	}
-	//00:12:6d:06:01
+	//00:12:6d:07:00:00:serial
 	out[16] = 0x00
 	out[17] = 0x12
 	out[18] = 0x6d
 	out[19] = 0x07
-	out[20] = byte(uniqueid >> 8)
-	out[21] = byte(uniqueid & 0xFF)
-	//22 pad
-	//23 pad
+	out[20] = 0
+	out[21] = 0
+	out[22] = byte(uniqueid >> 8)
+	out[23] = byte(uniqueid & 0xFF)
+
 	out[24] = byte(uniqueid & 0xFF)
 	out[25] = byte(uniqueid >> 8)
 	//26 pad

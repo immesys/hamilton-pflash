@@ -123,7 +123,7 @@ then
 fi
 
 #sentinel
-mkfactoryblock 2 $moteid $MOTETYPE $symkey $new_vk16 $new_sk16
+mkfactoryblock 3 $moteid $MOTETYPE $symkey $new_vk16 $new_sk16
 if [ $? -ne 0 ]
 then
   echo "Could not make factory block"
