@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-const Version = "3"
+const Version = "4"
 
 func main() {
 	//mkfactoryblock 1 uniqueid designator publickey16 privatekey16
@@ -38,7 +38,11 @@ func main() {
 	out[16] = 0x00
 	out[17] = 0x12
 	out[18] = 0x6d
-	out[19] = 0x07
+	if designator == 0x8000 {
+		out[19] = 0x08
+	} else {
+		out[19] = 0x07
+	}
 	out[20] = 0
 	out[21] = 0
 	out[22] = byte(uniqueid >> 8)

@@ -2,13 +2,13 @@
 
 if [ -z "$SCRIPTPW" ]
 then
-  echo "you need to set $SCRIPTPW"
+  echo "you need to set $$SCRIPTPW"
   exit 1
 fi
 
 if [ -z "$MOTETYPE" ]
 then
-  echo "you need to set MOTETYPE eg br1 is 8001 other hamiltons are 7 or 3c or 8c"
+  echo "you need to set MOTETYPE eg '8000' for BR or hamiltons are 7 or 3c or 8c"
   exit 1
 fi
 
@@ -29,7 +29,8 @@ BINFILE=$(find bin -name "*.bin")
 binhash=$(md5sum ${BINFILE} | cut -d' ' -f 1)
 
 # first, check if this device is known (so we get its moteid)
-echo "speed 1000" > .jlink
+echo "power on" > .jlink
+echo "speed 1000" >> .jlink
 echo "erase" >> .jlink
 echo "mem32 0x0080a00c 1" >> .jlink
 echo "mem32 0x0080a040 1" >> .jlink
@@ -37,7 +38,7 @@ echo "mem32 0x0080a044 1" >> .jlink
 echo "mem32 0x0080a048 1" >> .jlink
 echo "exit" >> .jlink
 JLinkExe -if swd -device atsamr21e18a < .jlink >.jlinko
-if [ $? -ne 0]
+if [ $? -ne 0 ]
 then
   echo "whoops"
   exit 1
@@ -49,6 +50,11 @@ w2=$(cat .jlinko | grep -e "^0080A040 =" | cut -d' ' -f 3)
 w3=$(cat .jlinko | grep -e "^0080A044 =" | cut -d' ' -f 3)
 w4=$(cat .jlinko | grep -e "^0080A048 =" | cut -d' ' -f 3)
 deviceid=$(printf "%08x%08x%08x%08x" 0x$w1 0x$w2 0x$w3 0x$w4)
+if [ "${#deviceid}" -lt "32" ]
+then
+    echo "Bad device ID. Is it plugged in right?"
+    exit 1
+fi
 echo -e "\033[34;1m[!] device id is $deviceid \033[0m"
 existing=$(echo "SELECT COUNT(*) FROM motes WHERE devid = '${deviceid}'" | $SQL)
 if [ $existing -ne 1 ]
@@ -88,6 +94,11 @@ mkdir -p .pflash
 if [ ! -e .pflash/$hexform.ent ]
 then
   bw2 mke -o .pflash/$hexform.ent -m "hamilton $hexform" -e 10y -r michael -r ucberkeley -n
+  if [ $? -ne 0 ]
+  then
+    echo "could not get create entity"
+    exit 1
+  fi
 fi
 
 # determine public key
@@ -114,6 +125,15 @@ symkey=$(head -c 1024 /dev/urandom | sha256sum | head -c 32)
 #   fi
 # fi
 
+
+#sentinel
+mkfactoryblock 4 $moteid $MOTETYPE $symkey $new_vk16 $new_sk16
+if [ $? -ne 0 ]
+then
+  echo "Could not make factory block"
+  exit 1
+fi
+
 # now we do the instance itself
 echo "INSERT INTO instances (moteid, repository, commit, motetype, publickey, symkey) VALUES (${moteid}, '${gitrepo}', '${githash}', '${MOTETYPE}', '$publickey', '$symkey')" | $SQL
 if [ $? -ne 0 ]
@@ -122,17 +142,10 @@ then
   exit 1
 fi
 
-#sentinel
-mkfactoryblock 3 $moteid $MOTETYPE $symkey $new_vk16 $new_sk16
-if [ $? -ne 0 ]
-then
-  echo "Could not make factory block"
-  exit 1
-fi
-
 #flashed time
 # now we flash the device
-echo "speed 1000" > .jlink
+echo "power on" > .jlink
+echo "speed 1000" >> .jlink
 echo "erase" >> .jlink
 echo "loadbin ${BINFILE} 0" >> .jlink
 echo "loadbin fblock.bin 0x3fc00" >> .jlink
